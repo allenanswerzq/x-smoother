@@ -10,9 +10,24 @@ function isForYouTimelineUrl(url) {
   }
 }
 
+function getSnowflakeTimestamp(value) {
+  if (typeof value != 'string' || !/^\d{15,}$/.test(value)) return null
+  try {
+    return Number((BigInt(value) >> 22n) + 1288834974657n)
+  } catch {
+    return null
+  }
+}
+
 function getTimelineEntryTimestamp(entry) {
   let newest = null
   let pending = [entry]
+
+  let entryId = typeof entry?.entryId == 'string' ? entry.entryId.match(/\d{15,}/)?.[0] : null
+  let entryTimestamp = getSnowflakeTimestamp(entryId)
+  // Timeline entry IDs identify the post X placed in this slot. Prefer that
+  // over nested IDs, which can belong to an author or a quoted post.
+  if (entryTimestamp != null) return entryTimestamp
 
   while (pending.length > 0) {
     let value = pending.pop()
@@ -33,10 +48,14 @@ function getTimelineEntryTimestamp(entry) {
   return newest
 }
 
-function sortTimelineEntriesByRecency(entries) {
-  let sortable = entries
-    .map((entry) => ({entry, timestamp: getTimelineEntryTimestamp(entry)}))
-    .filter(({timestamp}) => timestamp != null)
+function sortTimelineEntryGroupsByRecency(groups) {
+  let sortable = []
+  for (let entries of groups) {
+    for (let index = 0; index < entries.length; index++) {
+      let timestamp = getTimelineEntryTimestamp(entries[index])
+      if (timestamp != null) sortable.push({entries, index, entry: entries[index], timestamp})
+    }
+  }
 
   if (sortable.length < 2) return false
 
@@ -44,10 +63,8 @@ function sortTimelineEntriesByRecency(entries) {
   let changed = sorted.some(({entry}, index) => entry !== sortable[index].entry)
   if (!changed) return false
 
-  let next = 0
-  for (let index = 0; index < entries.length; index++) {
-    if (getTimelineEntryTimestamp(entries[index]) == null) continue
-    entries[index] = sorted[next++].entry
+  for (let index = 0; index < sortable.length; index++) {
+    sortable[index].entries[sortable[index].index] = sorted[index].entry
   }
   return true
 }
@@ -56,13 +73,10 @@ function sortForYouTimelinePayload(payload) {
   let instructions = payload?.data?.home?.home_timeline_urt?.instructions
   if (!Array.isArray(instructions)) return false
 
-  let changed = false
-  for (let instruction of instructions) {
-    if (Array.isArray(instruction?.entries)) {
-      changed = sortTimelineEntriesByRecency(instruction.entries) || changed
-    }
-  }
-  return changed
+  let groups = instructions
+    .map((instruction) => instruction?.entries)
+    .filter((entries) => Array.isArray(entries))
+  return sortTimelineEntryGroupsByRecency(groups)
 }
 
 function sortForYouTimelineText(request, responseText) {
@@ -83,27 +97,24 @@ function sortForYouTimelineText(request, responseText) {
   return sorted
 }
 
-const window_fetch = window.fetch
-window.fetch = async function(input, ...args) {
-  let response = await window_fetch.apply(this, [input, ...args])
-  let url = typeof input == 'string' || input instanceof URL ? String(input) : input?.url
-  if (!config.enabled || !config.sortForYouByRecency || !isForYouTimelineUrl(url)) {
-    return response
-  }
-
-  let responseJson = response.json.bind(response)
-  let responseText = response.text.bind(response)
-  response.json = async function() {
-    let payload = await responseJson()
+const Response_json = Response.prototype.json
+Response.prototype.json = async function() {
+  let payload = await Response_json.call(this)
+  if (config.enabled && config.sortForYouByRecency && isForYouTimelineUrl(this.url)) {
     if (sortForYouTimelinePayload(payload)) {
       log('sortForYouByRecency: sorted loaded posts by most recent')
     }
-    return payload
   }
-  response.text = async function() {
-    return sortForYouTimelineText(response, await responseText())
+  return payload
+}
+
+const Response_text = Response.prototype.text
+Response.prototype.text = async function() {
+  let text = await Response_text.call(this)
+  if (config.enabled && config.sortForYouByRecency && isForYouTimelineUrl(this.url)) {
+    return sortForYouTimelineText(this, text)
   }
-  return response
+  return text
 }
 
 const XMLHttpRequest_open = XMLHttpRequest.prototype.open
