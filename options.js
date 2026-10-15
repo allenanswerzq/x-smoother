@@ -291,6 +291,7 @@ const defaultConfig = {
   showPremiumReplyFollowedBy: true,
   showPremiumReplyFollowing: true,
   showPremiumReplyGovernment: true,
+  sortForYouByRecency: true,
   sortFollowing: 'mostRecent',
   sortReplies: 'relevant',
   tweakQuoteTweetsPage: true,

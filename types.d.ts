@@ -92,6 +92,7 @@ export type Config = {
   showPremiumReplyFollowedBy: boolean
   showPremiumReplyFollowing: boolean
   showPremiumReplyGovernment: boolean
+  sortForYouByRecency: boolean
   sortFollowing: 'mostRecent' | 'popular' | 'ignore'
   sortReplies: 'relevant' | 'recent' | 'liked'
   tweakQuoteTweetsPage: boolean

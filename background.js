@@ -1,6 +1,7 @@
 const isSafari = location.protocol.startsWith('safari-web-extension:')
 
 const feedDefaultsMigration = 'xSmootherFeedDefaultsV1'
+const forYouRecencyMigration = 'xSmootherForYouRecencyV1'
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get({[feedDefaultsMigration]: false}, (stored) => {
@@ -11,6 +12,17 @@ chrome.runtime.onInstalled.addListener(() => {
       hideForYouTimeline: false,
       sortFollowing: 'mostRecent',
       [feedDefaultsMigration]: true,
+    })
+  })
+})
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.get({[forYouRecencyMigration]: false}, (stored) => {
+    if (stored[forYouRecencyMigration]) return
+
+    chrome.storage.local.set({
+      sortForYouByRecency: true,
+      [forYouRecencyMigration]: true,
     })
   })
 })

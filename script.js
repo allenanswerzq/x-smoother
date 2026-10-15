@@ -1,8 +1,116 @@
 void function() {
 
+const sortedForYouResponses = new WeakMap()
+
+function isForYouTimelineUrl(url) {
+  try {
+    return new URL(url, location.origin).pathname.endsWith('/HomeTimeline')
+  } catch {
+    return false
+  }
+}
+
+function getTimelineEntryTimestamp(entry) {
+  let newest = null
+  let pending = [entry]
+
+  while (pending.length > 0) {
+    let value = pending.pop()
+    if (value == null || typeof value != 'object') continue
+
+    if (!Array.isArray(value) &&
+        typeof value.legacy?.created_at == 'string' &&
+        typeof value.legacy?.full_text == 'string') {
+      let timestamp = Date.parse(value.legacy.created_at)
+      if (Number.isFinite(timestamp) && (newest == null || timestamp > newest)) {
+        newest = timestamp
+      }
+    }
+
+    pending.push(...(Array.isArray(value) ? value : Object.values(value)))
+  }
+
+  return newest
+}
+
+function sortTimelineEntriesByRecency(entries) {
+  let sortable = entries
+    .map((entry) => ({entry, timestamp: getTimelineEntryTimestamp(entry)}))
+    .filter(({timestamp}) => timestamp != null)
+
+  if (sortable.length < 2) return false
+
+  let sorted = [...sortable].sort((a, b) => b.timestamp - a.timestamp)
+  let changed = sorted.some(({entry}, index) => entry !== sortable[index].entry)
+  if (!changed) return false
+
+  let next = 0
+  for (let index = 0; index < entries.length; index++) {
+    if (getTimelineEntryTimestamp(entries[index]) == null) continue
+    entries[index] = sorted[next++].entry
+  }
+  return true
+}
+
+function sortForYouTimelinePayload(payload) {
+  let instructions = payload?.data?.home?.home_timeline_urt?.instructions
+  if (!Array.isArray(instructions)) return false
+
+  let changed = false
+  for (let instruction of instructions) {
+    if (Array.isArray(instruction?.entries)) {
+      changed = sortTimelineEntriesByRecency(instruction.entries) || changed
+    }
+  }
+  return changed
+}
+
+function sortForYouTimelineText(request, responseText) {
+  let cached = sortedForYouResponses.get(request)
+  if (cached?.original === responseText) return cached.sorted
+
+  let sorted = responseText
+  try {
+    let payload = JSON.parse(responseText)
+    if (sortForYouTimelinePayload(payload)) {
+      sorted = JSON.stringify(payload)
+      log('sortForYouByRecency: sorted loaded posts by most recent')
+    }
+  } catch (e) {
+    error('sortForYouByRecency: error sorting timeline response', e)
+  }
+  sortedForYouResponses.set(request, {original: responseText, sorted})
+  return sorted
+}
+
+const window_fetch = window.fetch
+window.fetch = async function(input, ...args) {
+  let response = await window_fetch.apply(this, [input, ...args])
+  let url = typeof input == 'string' || input instanceof URL ? String(input) : input?.url
+  if (!config.enabled || !config.sortForYouByRecency || !isForYouTimelineUrl(url)) {
+    return response
+  }
+
+  let responseJson = response.json.bind(response)
+  let responseText = response.text.bind(response)
+  response.json = async function() {
+    let payload = await responseJson()
+    if (sortForYouTimelinePayload(payload)) {
+      log('sortForYouByRecency: sorted loaded posts by most recent')
+    }
+    return payload
+  }
+  response.text = async function() {
+    return sortForYouTimelineText(response, await responseText())
+  }
+  return response
+}
+
 const XMLHttpRequest_open = XMLHttpRequest.prototype.open
-XMLHttpRequest.prototype.open = function(method, url) {
-  if (!config.enabled) return XMLHttpRequest_open.apply(this, [method, url])
+XMLHttpRequest.prototype.open = function(method, url, ...args) {
+  // @ts-expect-error
+  this._sortForYouByRecency = config.enabled && config.sortForYouByRecency && isForYouTimelineUrl(url)
+  if (!config.enabled) return XMLHttpRequest_open.apply(this, [method, url, ...args])
 
   if (config.sortReplies != 'relevant' && !userSortedReplies && url.includes('/TweetDetail?')) {
     try {
@@ -55,7 +163,32 @@ XMLHttpRequest.prototype.open = function(method, url) {
     }
   }
 
-  return XMLHttpRequest_open.apply(this, [method, url])
+  return XMLHttpRequest_open.apply(this, [method, url, ...args])
+}
+
+for (let property of ['response', 'responseText']) {
+  let descriptor = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, property)
+  if (descriptor?.get == null || descriptor.configurable === false) continue
+  let originalGet = descriptor.get
+  Object.defineProperty(XMLHttpRequest.prototype, property, {
+    ...descriptor,
+    get() {
+      let value = originalGet.call(this)
+      // @ts-expect-error
+      if (!this._sortForYouByRecency || this.readyState != XMLHttpRequest.DONE) return value
+
+      if (typeof value == 'string') {
+        return sortForYouTimelineText(this, value)
+      }
+      if (value != null && typeof value == 'object') {
+        if (!sortedForYouResponses.has(this)) {
+          sortForYouTimelinePayload(value)
+          sortedForYouResponses.set(this, {original: value, sorted: value})
+        }
+      }
+      return value
+    },
+  })
 }
 
 const XMLHttpRequest_send = XMLHttpRequest.prototype.send
@@ -204,6 +337,7 @@ const config = {
   showPremiumReplyFollowedBy: true,
   showPremiumReplyFollowing: true,
   showPremiumReplyGovernment: true,
+  sortForYouByRecency: true,
   sortFollowing: 'mostRecent',
   sortReplies: 'relevant',
   tweakQuoteTweetsPage: true,
