@@ -149,7 +149,7 @@ const config = {
   hideEditImage: true,
   hideExplorePageContents: true,
   hideFollowingMetrics: true,
-  hideForYouTimeline: true,
+  hideForYouTimeline: false,
   hideGrokNav: true,
   hideGrokTweets: false,
   hideHistoryNav: false,

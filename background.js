@@ -1,5 +1,20 @@
 const isSafari = location.protocol.startsWith('safari-web-extension:')
 
+const feedDefaultsMigration = 'xSmootherFeedDefaultsV1'
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.storage.local.get({[feedDefaultsMigration]: false}, (stored) => {
+    if (stored[feedDefaultsMigration]) return
+
+    chrome.storage.local.set({
+      alwaysUseLatestTweets: true,
+      hideForYouTimeline: false,
+      sortFollowing: 'mostRecent',
+      [feedDefaultsMigration]: true,
+    })
+  })
+})
+
 const enabledIcons = {
   16: 'icons/icon16.png',
   32: 'icons/icon32.png',
