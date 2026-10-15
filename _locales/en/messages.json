@@ -206,6 +206,9 @@
   "hideMessagesDrawerLabel": {
     "message": "Chat drawer"
   },
+  "hideNavigationSidebarLabel": {
+    "message": "Navigation sidebar"
+  },
   "hideMetricsLabel": {
     "message": "Hide metrics"
   },

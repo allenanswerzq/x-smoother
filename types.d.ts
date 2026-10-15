@@ -110,6 +110,7 @@ export type Config = {
   hideExploreNavWithSidebar: boolean
   hideLiveBroadcasts: boolean
   hideMessagesDrawer: boolean
+  hideNavigationSidebar: boolean
   hideSidebarContent: boolean
   hideSuggestedFollows: boolean
   hideTimelineTweetBox: boolean

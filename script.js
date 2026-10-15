@@ -222,6 +222,7 @@ const config = {
   hideExploreNavWithSidebar: true,
   hideLiveBroadcasts: false,
   hideMessagesDrawer: true,
+  hideNavigationSidebar: false,
   hideSidebarContent: true,
   hideSpacesNav: false,
   hideSuggestedFollows: false,
@@ -5037,6 +5038,9 @@ const configureCss = (() => {
       }
       if (config.hideMessagesDrawer) {
         cssRules.push(`div:is([data-testid="DMDrawer"], [data-testid="chat-drawer-root"]) { visibility: hidden; }`)
+      }
+      if (config.hideNavigationSidebar) {
+        hideCssSelectors.push('header[role="banner"]')
       }
       if (config.hideViews) {
         hideCssSelectors.push(
