@@ -7485,7 +7485,7 @@ async function tweakTweetButton() {
 
 async function observeNewPostsButton() {
   let $observerTarget
-  let bannerSelector
+  let nativeBannerSelector
 
   if (mobile) {
     let $timelineHeader = await getElement(Selectors.MOBILE_TIMELINE_HEADER, {
@@ -7494,29 +7494,45 @@ async function observeNewPostsButton() {
     })
     if (!$timelineHeader) return
     $observerTarget = $timelineHeader.parentElement
-    bannerSelector = `${Selectors.MOBILE_TIMELINE_HEADER} ~ div[style^="transform"]:last-child`
+    nativeBannerSelector = `${Selectors.MOBILE_TIMELINE_HEADER} ~ div[style^="transform"]:last-child`
   } else {
-    $observerTarget = await getElement(`${Selectors.PRIMARY_COLUMN} > div > div:first-child`, {
-      name: 'desktop timeline header container for new posts button',
+    $observerTarget = await getElement(Selectors.PRIMARY_COLUMN, {
+      name: 'primary column for new posts button',
       stopIf: pageIsNot(currentPage),
     })
-    bannerSelector = `${Selectors.PRIMARY_COLUMN} > div > div:first-child > div[style^="transform"]`
+    nativeBannerSelector = `${Selectors.PRIMARY_COLUMN} > div > div:first-child > div[style^="transform"]`
   }
   if (!$observerTarget) return
 
   let clickedButtons = new WeakSet()
+  let clickScheduled = false
+
+  function getNewPostsButton() {
+    let $banner = document.querySelector(nativeBannerSelector)
+    if ($banner) {
+      let $button = $banner.matches('button, [role="button"]')
+        ? $banner
+        : $banner.querySelector('button, [role="button"]')
+      if ($button instanceof HTMLElement) return $button
+    }
+
+    // X can also render an inline "Show 3 posts" button between the composer
+    // and the timeline instead of its native "See new posts" pill.
+    return Array.from($observerTarget.querySelectorAll('button, [role="button"]')).find($button =>
+      /^Show\s+[\d.,]+\s+posts?$/i.test($button.textContent.trim().replace(/\s+/g, ' '))
+    )
+  }
+
   function clickNewPostsButton() {
-    let $banner = document.querySelector(bannerSelector)
-    if (!$banner) return
-
-    let $button = $banner.matches('button, [role="button"]')
-      ? $banner
-      : $banner.querySelector('button, [role="button"]')
-    if (!($button instanceof HTMLElement) || clickedButtons.has($button)) return
-
-    clickedButtons.add($button)
+    if (clickScheduled) return
+    clickScheduled = true
     requestAnimationFrame(() => {
+      clickScheduled = false
+      let $button = getNewPostsButton()
+      if (!($button instanceof HTMLElement) || clickedButtons.has($button)) return
       if (!config.autoLoadNewPosts || !isOnHomeTimelinePage() || !$button.isConnected) return
+
+      clickedButtons.add($button)
       log('automatically loading new posts')
       $button.click()
     })
@@ -7526,7 +7542,7 @@ async function observeNewPostsButton() {
     leading: true,
     name: 'new posts button',
     observers: pageObservers,
-  }, {childList: true, subtree: true})
+  }, {childList: true, subtree: true, characterData: true})
 }
 
 function tweakHomeTimelinePage() {
