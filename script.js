@@ -125,6 +125,7 @@ const config = {
   addAddMutedWordMenuItem: true,
   addFocusedTweetAccountLocation: false,
   alwaysUseLatestTweets: true,
+  autoLoadNewPosts: true,
   bypassAgeVerification: true,
   darkModeTheme: 'lightsOut',
   defaultToLatestSearch: false,
@@ -7482,6 +7483,52 @@ async function tweakTweetButton() {
   }
 }
 
+async function observeNewPostsButton() {
+  let $observerTarget
+  let bannerSelector
+
+  if (mobile) {
+    let $timelineHeader = await getElement(Selectors.MOBILE_TIMELINE_HEADER, {
+      name: 'mobile timeline header for new posts button',
+      stopIf: pageIsNot(currentPage),
+    })
+    if (!$timelineHeader) return
+    $observerTarget = $timelineHeader.parentElement
+    bannerSelector = `${Selectors.MOBILE_TIMELINE_HEADER} ~ div[style^="transform"]:last-child`
+  } else {
+    $observerTarget = await getElement(`${Selectors.PRIMARY_COLUMN} > div > div:first-child`, {
+      name: 'desktop timeline header container for new posts button',
+      stopIf: pageIsNot(currentPage),
+    })
+    bannerSelector = `${Selectors.PRIMARY_COLUMN} > div > div:first-child > div[style^="transform"]`
+  }
+  if (!$observerTarget) return
+
+  let clickedButtons = new WeakSet()
+  function clickNewPostsButton() {
+    let $banner = document.querySelector(bannerSelector)
+    if (!$banner) return
+
+    let $button = $banner.matches('button, [role="button"]')
+      ? $banner
+      : $banner.querySelector('button, [role="button"]')
+    if (!($button instanceof HTMLElement) || clickedButtons.has($button)) return
+
+    clickedButtons.add($button)
+    requestAnimationFrame(() => {
+      if (!config.autoLoadNewPosts || !isOnHomeTimelinePage() || !$button.isConnected) return
+      log('automatically loading new posts')
+      $button.click()
+    })
+  }
+
+  observeElement($observerTarget, clickNewPostsButton, {
+    leading: true,
+    name: 'new posts button',
+    observers: pageObservers,
+  }, {childList: true, subtree: true})
+}
+
 function tweakHomeTimelinePage() {
   let $timelineTabs = document.querySelector(`${mobile ? Selectors.MOBILE_TIMELINE_HEADER : Selectors.PRIMARY_COLUMN} nav`)
 
@@ -7543,6 +7590,10 @@ function tweakHomeTimelinePage() {
     },
     tabbedTimelineContainerSelector: 'div[data-testid="primaryColumn"] > div > div:last-child',
   })
+
+  if (config.autoLoadNewPosts) {
+    observeNewPostsButton()
+  }
 
   if (desktop) {
     observeDesktopHomeTimelineTweetBox()

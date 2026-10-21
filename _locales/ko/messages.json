@@ -14,6 +14,9 @@
   "alwaysUseLatestTweetsLabel": {
     "message": "기본적으로 팔로잉 (시간순) 타임라인 사용"
   },
+  "autoLoadNewPostsLabel": {
+    "message": "새 게시물 자동으로 불러오기"
+  },
   "appStoreSubtitle": {
     "message": "타임라인을 통제하세요"
   },

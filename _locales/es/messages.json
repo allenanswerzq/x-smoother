@@ -14,6 +14,9 @@
   "alwaysUseLatestTweetsLabel": {
     "message": "Usar la timeline cronológica (Siguiendo) por defecto"
   },
+  "autoLoadNewPostsLabel": {
+    "message": "Cargar automáticamente las publicaciones nuevas"
+  },
   "appStoreSubtitle": {
     "message": "Controla tu línea de tiempo"
   },
