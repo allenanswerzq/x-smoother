@@ -14,6 +14,9 @@
   "alwaysUseLatestTweetsLabel": {
     "message": "Use the Following (chronological) timeline by default"
   },
+  "autoExpandPostsLabel": {
+    "message": "Automatically expand posts"
+  },
   "autoLoadNewPostsLabel": {
     "message": "Automatically load new posts"
   },

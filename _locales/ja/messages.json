@@ -14,6 +14,9 @@
   "alwaysUseLatestTweetsLabel": {
     "message": "常にタイムラインをフォロー中（時系列順）にする"
   },
+  "autoExpandPostsLabel": {
+    "message": "投稿を自動的に展開"
+  },
   "autoLoadNewPostsLabel": {
     "message": "新しいポストを自動的に読み込む"
   },

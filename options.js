@@ -39,6 +39,7 @@ for (let translationId of [
   'addUserHoverCardAccountLocationLabel',
   'addFocusedTweetAccountLocationLabel',
   'alwaysUseLatestTweetsLabel',
+  'autoExpandPostsLabel',
   'autoLoadNewPostsLabel',
   'bypassAgeVerificationLabel',
   'customCssLabel',
@@ -214,6 +215,7 @@ const defaultConfig = {
   addAddMutedWordMenuItem: true,
   addFocusedTweetAccountLocation: false,
   alwaysUseLatestTweets: true,
+  autoExpandPosts: true,
   autoLoadNewPosts: true,
   bypassAgeVerification: true,
   darkModeTheme: 'lightsOut',
@@ -359,7 +361,7 @@ let $showBlueReplyFollowersCountLabel = /** @type {HTMLElement} */ (document.que
 //#region Utility functions
 function exportConfig() {
   let $a = document.createElement('a')
-  $a.download = 'control-panel-for-twitter-v4.25.11.config.txt'
+  $a.download = 'control-panel-for-twitter-v4.25.12.config.txt'
   $a.href = URL.createObjectURL(new Blob([
     JSON.stringify(optionsConfig, null, 2)
   ], {type: 'text/plain'}))

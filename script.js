@@ -125,6 +125,7 @@ const config = {
   addAddMutedWordMenuItem: true,
   addFocusedTweetAccountLocation: false,
   alwaysUseLatestTweets: true,
+  autoExpandPosts: true,
   autoLoadNewPosts: true,
   bypassAgeVerification: true,
   darkModeTheme: 'lightsOut',
@@ -3901,6 +3902,37 @@ async function observeTimeline(page, options = {}) {
   }
 }
 
+let autoExpandPostAttempts = new WeakMap()
+let autoExpandPostRetryTimers = new WeakMap()
+
+/**
+ * Expands truncated post text without affecting other "Show more" controls.
+ * @param {HTMLElement} $context
+ */
+function autoExpandPosts($context) {
+  if (!config.autoExpandPosts) return
+
+  let clicked = false
+  for (let $showMore of $context.querySelectorAll('[data-testid="tweet-text-show-more-link"]')) {
+    if (!($showMore instanceof HTMLElement)) continue
+
+    let attemptCount = (autoExpandPostAttempts.get($showMore) ?? 0) + 1
+    if (attemptCount > 5) continue
+
+    autoExpandPostAttempts.set($showMore, attemptCount)
+    log('automatically expanding post')
+    $showMore.click()
+    clicked = true
+  }
+
+  if (clicked) {
+    clearTimeout(autoExpandPostRetryTimers.get($context))
+    autoExpandPostRetryTimers.set($context, setTimeout(() => {
+      if ($context.isConnected) autoExpandPosts($context)
+    }, 500))
+  }
+}
+
 /**
  * @param {HTMLElement} $editorRoot
  * @param {{
@@ -6095,6 +6127,8 @@ function onTimelineChange($timeline, page, options = {}) {
   let isOnNotificationsTimeline = isOnNotificationsPage()
   let timelineHasSpecificTweetHandling = isOnHomeTimeline || isOnListTimeline || isOnProfileTimeline
 
+  autoExpandPosts($timeline)
+
   if (config.twitterBlueChecks != 'ignore' && (isUserTimeline || !timelineHasSpecificTweetHandling)) {
     processBlueChecks($timeline)
   }
@@ -6286,6 +6320,8 @@ function onTimelineChange($timeline, page, options = {}) {
  */
 function onIndividualTweetTimelineChange($timeline, options) {
   let startTime = Date.now()
+
+  autoExpandPosts($timeline)
 
   let {seen} = options
   let itemTypes = {}
