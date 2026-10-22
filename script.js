@@ -4038,6 +4038,28 @@ function observeAutomaticTimelineActions() {
         let $button = getClickTarget($label, $article)
         activated = activate($button, 'automatically expanding post', 'Show more') || activated
       }
+
+      // Reply branches are separate timeline items rather than part of the
+      // post article, so handle their exact labels within the primary column
+      // or a tweet dialog. This avoids similarly named controls elsewhere.
+      let $replyScopes = new Set([
+        document.querySelector(Selectors.PRIMARY_COLUMN),
+        ...document.querySelectorAll('[role="dialog"]'),
+      ])
+      if (mobile) $replyScopes.add($main)
+
+      for (let $replyScope of $replyScopes) {
+        if (!($replyScope instanceof HTMLElement)) continue
+        for (let $label of getDeepestMatches(
+          $replyScope,
+          'button, [role="button"], a[href], [tabindex="0"], span',
+          $element => ['Show replies', getString('SHOW_MORE_REPLIES')].includes(getNormalizedText($element))
+        )) {
+          let text = getNormalizedText($label)
+          let $button = getClickTarget($label, $replyScope)
+          activated = activate($button, 'automatically expanding replies', text) || activated
+        }
+      }
     }
 
     if (activated) {
