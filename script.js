@@ -3912,8 +3912,22 @@ let autoExpandPostRetryTimers = new WeakMap()
 function autoExpandPosts($context) {
   if (!config.autoExpandPosts) return
 
+  let $showMoreElements = new Set($context.querySelectorAll('[data-testid="tweet-text-show-more-link"]'))
+
+  // Some post layouts render the control as an unlabelled text span. Keep the
+  // fallback inside post articles so controls such as "Show more replies" and
+  // sidebar links aren't affected.
+  for (let $element of $context.querySelectorAll('article button, article [role="button"], article span')) {
+    let text = $element.textContent.trim().replace(/\s+/g, ' ')
+    if (text != 'Show more') continue
+    if (Array.from($element.children).some($child =>
+      $child.textContent.trim().replace(/\s+/g, ' ') == text
+    )) continue
+    $showMoreElements.add($element)
+  }
+
   let clicked = false
-  for (let $showMore of $context.querySelectorAll('[data-testid="tweet-text-show-more-link"]')) {
+  for (let $showMore of $showMoreElements) {
     if (!($showMore instanceof HTMLElement)) continue
 
     let attemptCount = (autoExpandPostAttempts.get($showMore) ?? 0) + 1
