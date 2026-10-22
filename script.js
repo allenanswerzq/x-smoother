@@ -3902,49 +3902,165 @@ async function observeTimeline(page, options = {}) {
   }
 }
 
-let autoExpandPostAttempts = new WeakMap()
-let autoExpandPostRetryTimers = new WeakMap()
+let automaticActionAttempts = new WeakMap()
 
 /**
- * Expands truncated post text without affecting other "Show more" controls.
- * @param {HTMLElement} $context
+ * @param {Element} $element
  */
-function autoExpandPosts($context) {
-  if (!config.autoExpandPosts) return
+function getNormalizedText($element) {
+  return $element.textContent.trim().replace(/\s+/g, ' ')
+}
 
-  let $showMoreElements = new Set($context.querySelectorAll('[data-testid="tweet-text-show-more-link"]'))
+/**
+ * Keeps automatic timeline actions working when X inserts their controls after
+ * the surrounding timeline item, or reuses an existing element with new text.
+ */
+function observeAutomaticTimelineActions() {
+  if (!config.autoExpandPosts && !config.autoLoadNewPosts) return
 
-  // Some post layouts render the control as an unlabelled text span. Keep the
-  // fallback inside post articles so controls such as "Show more replies" and
-  // sidebar links aren't affected.
-  for (let $element of $context.querySelectorAll('article button, article [role="button"], article span')) {
-    let text = $element.textContent.trim().replace(/\s+/g, ' ')
-    if (text != 'Show more') continue
-    if (Array.from($element.children).some($child =>
-      $child.textContent.trim().replace(/\s+/g, ' ') == text
-    )) continue
-    $showMoreElements.add($element)
+  let $observerTarget = $reactRoot ?? document.body
+  if (!$observerTarget) return
+
+  let scanTimer
+  let retryTimer
+  let disconnected = false
+
+  /**
+   * @param {HTMLElement} $element
+   * @param {string} action
+   * @param {string} identity
+   */
+  function activate($element, action, identity) {
+    if (!$element.isConnected || $element.matches(':disabled, [aria-disabled="true"]')) return false
+
+    let now = Date.now()
+    let previous = automaticActionAttempts.get($element)
+    if (previous?.identity == identity && now - previous.time < 400) return false
+
+    let count = previous?.identity == identity ? previous.count + 1 : 1
+    if (count > 5) return false
+
+    automaticActionAttempts.set($element, {count, identity, time: now})
+    log(action)
+    $element.click()
+    return true
   }
 
-  let clicked = false
-  for (let $showMore of $showMoreElements) {
-    if (!($showMore instanceof HTMLElement)) continue
-
-    let attemptCount = (autoExpandPostAttempts.get($showMore) ?? 0) + 1
-    if (attemptCount > 5) continue
-
-    autoExpandPostAttempts.set($showMore, attemptCount)
-    log('automatically expanding post')
-    $showMore.click()
-    clicked = true
+  /**
+   * @param {HTMLElement} $label
+   * @param {HTMLElement} $scope
+   */
+  function getClickTarget($label, $scope) {
+    let $clickTarget = $label.closest('button, [role="button"], a[href], [tabindex="0"]')
+    return $clickTarget instanceof HTMLElement &&
+      $scope.contains($clickTarget) &&
+      getNormalizedText($clickTarget) == getNormalizedText($label)
+      ? $clickTarget
+      : $label
   }
 
-  if (clicked) {
-    clearTimeout(autoExpandPostRetryTimers.get($context))
-    autoExpandPostRetryTimers.set($context, setTimeout(() => {
-      if ($context.isConnected) autoExpandPosts($context)
-    }, 500))
+  /**
+   * @param {HTMLElement} $scope
+   * @param {string} selector
+   * @param {(element: HTMLElement) => boolean} matches
+   */
+  function getDeepestMatches($scope, selector, matches) {
+    let matchesInScope = Array.from($scope.querySelectorAll(selector)).filter($element =>
+      $element instanceof HTMLElement && matches($element)
+    )
+    return matchesInScope.filter($element =>
+      !matchesInScope.some($other => $other != $element && $element.contains($other))
+    )
   }
+
+  function scan() {
+    scanTimer = null
+    if (disconnected) return
+
+    let $main = document.querySelector('main')
+    let activated = false
+
+    if (config.autoLoadNewPosts && location.pathname == PagePaths.HOME && $main instanceof HTMLElement) {
+      let $scope = document.querySelector(Selectors.PRIMARY_COLUMN) ?? $main
+      if ($scope instanceof HTMLElement) {
+        // Match the visible prompt before considering X's older floating
+        // banner markup. The old structural selector can contain unrelated
+        // controls, including the Tweet button.
+        let [$label] = getDeepestMatches(
+          $scope,
+          'button, [role="button"], a[href], [tabindex="0"], span',
+          $element => !$element.closest('article') && /^Show\s+[\d.,]+\s+posts?$/i.test(getNormalizedText($element))
+        )
+        if ($label) {
+          let $button = getClickTarget($label, $scope)
+          activated = activate($button, 'automatically loading new posts', getNormalizedText($label)) || activated
+        } else {
+          // Older versions of X use a floating, sometimes icon-only button.
+          // Keep supporting it, but reject named controls so this structural
+          // fallback can't mistake the composer Tweet button for the banner.
+          let bannerSelector = mobile
+            ? `${Selectors.MOBILE_TIMELINE_HEADER} ~ div[style^="transform"]:last-child`
+            : `${Selectors.PRIMARY_COLUMN} > div > div:first-child > div[style^="transform"]`
+          let $banner = document.querySelector(bannerSelector)
+          let $button = $banner?.matches('button, [role="button"]')
+            ? $banner
+            : $banner?.querySelector('button, [role="button"]')
+          if ($button instanceof HTMLElement) {
+            let text = getNormalizedText($button)
+            if (text == '' || /new posts?/i.test(text)) {
+              activated = activate($button, 'automatically loading new posts', `native banner: ${text}`) || activated
+            }
+          }
+        }
+      }
+    }
+
+    if (config.autoExpandPosts) {
+      let $scope = $reactRoot ?? document.body
+      let $showMoreElements = new Set(
+        $scope.querySelectorAll('[data-testid="tweet-text-show-more-link"]')
+      )
+
+      // Newer layouts can omit the test id. Exact text and article scoping
+      // avoid activating "Show more replies" and unrelated sidebar links.
+      for (let $label of getDeepestMatches(
+        $scope,
+        'article button, article [role="button"], article a[href], article [tabindex="0"], article span',
+        $element => getNormalizedText($element) == 'Show more'
+      )) {
+        $showMoreElements.add($label)
+      }
+
+      for (let $label of $showMoreElements) {
+        if (!($label instanceof HTMLElement)) continue
+        let $article = $label.closest('article')
+        if (!($article instanceof HTMLElement)) continue
+        let $button = getClickTarget($label, $article)
+        activated = activate($button, 'automatically expanding post', 'Show more') || activated
+      }
+    }
+
+    if (activated) {
+      clearTimeout(retryTimer)
+      retryTimer = setTimeout(scheduleScan, 500)
+    }
+  }
+
+  function scheduleScan() {
+    if (disconnected || scanTimer != null) return
+    scanTimer = setTimeout(scan)
+  }
+
+  observeElement($observerTarget, scheduleScan, {
+    leading: true,
+    name: 'automatic timeline actions',
+    observers: pageObservers,
+    onDisconnect() {
+      disconnected = true
+      clearTimeout(scanTimer)
+      clearTimeout(retryTimer)
+    },
+  }, {childList: true, subtree: true, characterData: true})
 }
 
 /**
@@ -6141,8 +6257,6 @@ function onTimelineChange($timeline, page, options = {}) {
   let isOnNotificationsTimeline = isOnNotificationsPage()
   let timelineHasSpecificTweetHandling = isOnHomeTimeline || isOnListTimeline || isOnProfileTimeline
 
-  autoExpandPosts($timeline)
-
   if (config.twitterBlueChecks != 'ignore' && (isUserTimeline || !timelineHasSpecificTweetHandling)) {
     processBlueChecks($timeline)
   }
@@ -6334,8 +6448,6 @@ function onTimelineChange($timeline, page, options = {}) {
  */
 function onIndividualTweetTimelineChange($timeline, options) {
   let startTime = Date.now()
-
-  autoExpandPosts($timeline)
 
   let {seen} = options
   let itemTypes = {}
@@ -6912,6 +7024,8 @@ function processCurrentPage() {
       tweakProfileSettingsPage()
     }
   }
+
+  observeAutomaticTimelineActions()
 }
 
 /**
@@ -7533,94 +7647,6 @@ async function tweakTweetButton() {
   }
 }
 
-async function observeNewPostsButton() {
-  let $observerTarget
-  let nativeBannerSelector
-
-  if (mobile) {
-    let $timelineHeader = await getElement(Selectors.MOBILE_TIMELINE_HEADER, {
-      name: 'mobile timeline header for new posts button',
-      stopIf: pageIsNot(currentPage),
-    })
-    if (!$timelineHeader) return
-    $observerTarget = $timelineHeader.parentElement
-    nativeBannerSelector = `${Selectors.MOBILE_TIMELINE_HEADER} ~ div[style^="transform"]:last-child`
-  } else {
-    $observerTarget = await getElement(Selectors.PRIMARY_COLUMN, {
-      name: 'primary column for new posts button',
-      stopIf: pageIsNot(currentPage),
-    })
-    nativeBannerSelector = `${Selectors.PRIMARY_COLUMN} > div > div:first-child > div[style^="transform"]`
-  }
-  if (!$observerTarget) return
-
-  let clickAttempts = new WeakMap()
-  let clickScheduled = false
-  let retryTimer
-
-  function getButtonText($element) {
-    return $element.textContent.trim().replace(/\s+/g, ' ')
-  }
-
-  function isInlineNewPostsButton($element) {
-    return /^Show\s+[\d.,]+\s+posts?$/i.test(getButtonText($element))
-  }
-
-  function getNewPostsButton() {
-    let $banner = document.querySelector(nativeBannerSelector)
-    if ($banner) {
-      let $button = $banner.matches('button, [role="button"]')
-        ? $banner
-        : $banner.querySelector('button, [role="button"]')
-      if ($button instanceof HTMLElement) return $button
-    }
-
-    // X can also render an inline "Show 3 posts" prompt between the composer
-    // and the timeline. It isn't always marked up as a button, so find the
-    // deepest exact-text element and click it to bubble the event to X's
-    // handler.
-    let $label = Array.from($observerTarget.querySelectorAll('button, [role="button"], a[href], [tabindex="0"], span')).find($element =>
-      isInlineNewPostsButton($element) &&
-      !Array.from($element.children).some(isInlineNewPostsButton)
-    )
-    if (!$label) return null
-
-    return $label.closest('button, [role="button"], a[href], [tabindex="0"]') ?? $label
-  }
-
-  function clickNewPostsButton() {
-    if (clickScheduled) return
-    clickScheduled = true
-    requestAnimationFrame(() => {
-      clickScheduled = false
-      let $button = getNewPostsButton()
-      if (!($button instanceof HTMLElement)) return
-      if (!config.autoLoadNewPosts || !isOnHomeTimelinePage() || !$button.isConnected) return
-
-      let text = getButtonText($button)
-      let attempts = clickAttempts.get($button)
-      let attemptCount = attempts?.text == text ? attempts.count + 1 : 1
-      if (attemptCount > 5) return
-
-      clickAttempts.set($button, {text, count: attemptCount})
-      log('automatically loading new posts')
-      $button.click()
-
-      clearTimeout(retryTimer)
-      retryTimer = setTimeout(clickNewPostsButton, 500)
-    })
-  }
-
-  observeElement($observerTarget, clickNewPostsButton, {
-    leading: true,
-    name: 'new posts button',
-    observers: pageObservers,
-    onDisconnect() {
-      clearTimeout(retryTimer)
-    },
-  }, {childList: true, subtree: true, characterData: true})
-}
-
 function tweakHomeTimelinePage() {
   let $timelineTabs = document.querySelector(`${mobile ? Selectors.MOBILE_TIMELINE_HEADER : Selectors.PRIMARY_COLUMN} nav`)
 
@@ -7682,10 +7708,6 @@ function tweakHomeTimelinePage() {
     },
     tabbedTimelineContainerSelector: 'div[data-testid="primaryColumn"] > div > div:last-child',
   })
-
-  if (config.autoLoadNewPosts) {
-    observeNewPostsButton()
-  }
 
   if (desktop) {
     observeDesktopHomeTimelineTweetBox()
