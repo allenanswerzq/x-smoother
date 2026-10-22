@@ -7504,8 +7504,17 @@ async function observeNewPostsButton() {
   }
   if (!$observerTarget) return
 
-  let clickedButtons = new WeakSet()
+  let clickAttempts = new WeakMap()
   let clickScheduled = false
+  let retryTimer
+
+  function getButtonText($element) {
+    return $element.textContent.trim().replace(/\s+/g, ' ')
+  }
+
+  function isInlineNewPostsButton($element) {
+    return /^Show\s+[\d.,]+\s+posts?$/i.test(getButtonText($element))
+  }
 
   function getNewPostsButton() {
     let $banner = document.querySelector(nativeBannerSelector)
@@ -7516,11 +7525,17 @@ async function observeNewPostsButton() {
       if ($button instanceof HTMLElement) return $button
     }
 
-    // X can also render an inline "Show 3 posts" button between the composer
-    // and the timeline instead of its native "See new posts" pill.
-    return Array.from($observerTarget.querySelectorAll('button, [role="button"]')).find($button =>
-      /^Show\s+[\d.,]+\s+posts?$/i.test($button.textContent.trim().replace(/\s+/g, ' '))
+    // X can also render an inline "Show 3 posts" prompt between the composer
+    // and the timeline. It isn't always marked up as a button, so find the
+    // deepest exact-text element and click it to bubble the event to X's
+    // handler.
+    let $label = Array.from($observerTarget.querySelectorAll('button, [role="button"], a[href], [tabindex="0"], span')).find($element =>
+      isInlineNewPostsButton($element) &&
+      !Array.from($element.children).some(isInlineNewPostsButton)
     )
+    if (!$label) return null
+
+    return $label.closest('button, [role="button"], a[href], [tabindex="0"]') ?? $label
   }
 
   function clickNewPostsButton() {
@@ -7529,12 +7544,20 @@ async function observeNewPostsButton() {
     requestAnimationFrame(() => {
       clickScheduled = false
       let $button = getNewPostsButton()
-      if (!($button instanceof HTMLElement) || clickedButtons.has($button)) return
+      if (!($button instanceof HTMLElement)) return
       if (!config.autoLoadNewPosts || !isOnHomeTimelinePage() || !$button.isConnected) return
 
-      clickedButtons.add($button)
+      let text = getButtonText($button)
+      let attempts = clickAttempts.get($button)
+      let attemptCount = attempts?.text == text ? attempts.count + 1 : 1
+      if (attemptCount > 5) return
+
+      clickAttempts.set($button, {text, count: attemptCount})
       log('automatically loading new posts')
       $button.click()
+
+      clearTimeout(retryTimer)
+      retryTimer = setTimeout(clickNewPostsButton, 500)
     })
   }
 
@@ -7542,6 +7565,9 @@ async function observeNewPostsButton() {
     leading: true,
     name: 'new posts button',
     observers: pageObservers,
+    onDisconnect() {
+      clearTimeout(retryTimer)
+    },
   }, {childList: true, subtree: true, characterData: true})
 }
 
