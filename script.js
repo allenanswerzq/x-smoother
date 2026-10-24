@@ -4407,6 +4407,193 @@ function checkReactNativeStylesheet() {
 let History_push
 let History_replace
 
+/**
+ * The most recent timeline position captured before opening an individual
+ * Tweet. X sometimes rebuilds its virtualized timeline when navigating back,
+ * which loses the browser's native scroll restoration.
+ * @type {{url: string, scrollY: number, anchorPath: string | null, anchorTop: number | null} | null}
+ */
+let timelineScrollSnapshot = null
+
+/** Cancels an in-progress timeline scroll restoration. */
+let cancelTimelineScrollRestoration = null
+
+function getCurrentUrlKey() {
+  return `${location.pathname}${location.search}`
+}
+
+/**
+ * @param {unknown} destination
+ * @returns {string | null}
+ */
+function getNavigationPath(destination) {
+  try {
+    if (typeof destination == 'string') {
+      return new URL(destination, location.href).pathname
+    }
+    if (destination != null && typeof destination == 'object' &&
+        typeof destination.pathname == 'string') {
+      return destination.pathname
+    }
+  } catch {}
+  return null
+}
+
+/**
+ * Finds an article which can anchor scroll restoration. Prefer the Tweet being
+ * opened, then fall back to the visible article closest to the top edge.
+ * @param {string | null} preferredPath
+ * @returns {{path: string, top: number} | null}
+ */
+function getTimelineScrollAnchor(preferredPath = null) {
+  let $scope = document.querySelector(Selectors.PRIMARY_COLUMN) ?? document.querySelector('main')
+  if (!($scope instanceof HTMLElement)) return null
+
+  let candidates = []
+  for (let $article of $scope.querySelectorAll('article')) {
+    if (!($article instanceof HTMLElement)) continue
+    let $permalink = $article.querySelector('a[href*="/status/"]:has(time)')
+    if (!($permalink instanceof HTMLAnchorElement)) continue
+
+    let path
+    try {
+      path = new URL($permalink.href, location.href).pathname.match(URL_TWEET_BASE_RE)?.[0]
+    } catch {
+      continue
+    }
+    if (!path) continue
+
+    let rect = $article.getBoundingClientRect()
+    if (path == preferredPath) return {path, top: rect.top}
+    if (rect.bottom > 0 && rect.top < window.innerHeight) {
+      candidates.push({path, top: rect.top})
+    }
+  }
+
+  candidates.sort((a, b) => Math.abs(a.top) - Math.abs(b.top))
+  return candidates[0] ?? null
+}
+
+/**
+ * @param {string} destinationPath
+ */
+function captureTimelineScroll(destinationPath) {
+  if (URL_TWEET_BASE_RE.test(location.pathname)) return
+
+  let tweetPath = destinationPath.match(URL_TWEET_BASE_RE)?.[0] ?? null
+  let anchor = getTimelineScrollAnchor(tweetPath)
+  timelineScrollSnapshot = {
+    url: getCurrentUrlKey(),
+    scrollY: window.scrollY,
+    anchorPath: anchor?.path ?? null,
+    anchorTop: anchor?.top ?? null,
+  }
+  log('captured timeline scroll position', timelineScrollSnapshot)
+}
+
+/**
+ * Finds the saved anchor after X has rebuilt the timeline.
+ * @param {string} anchorPath
+ * @returns {HTMLElement | null}
+ */
+function findTimelineScrollAnchor(anchorPath) {
+  let $scope = document.querySelector(Selectors.PRIMARY_COLUMN) ?? document.querySelector('main')
+  if (!($scope instanceof HTMLElement)) return null
+
+  for (let $article of $scope.querySelectorAll('article')) {
+    if (!($article instanceof HTMLElement)) continue
+    let $permalink = $article.querySelector('a[href*="/status/"]:has(time)')
+    if (!($permalink instanceof HTMLAnchorElement)) continue
+    try {
+      if (new URL($permalink.href, location.href).pathname.match(URL_TWEET_BASE_RE)?.[0] == anchorPath) {
+        return $article
+      }
+    } catch {}
+  }
+  return null
+}
+
+/**
+ * Re-applies the saved position while X finishes rebuilding its virtualized
+ * timeline. Any deliberate user input immediately hands scrolling back to the
+ * user.
+ */
+function restoreTimelineScroll() {
+  let snapshot = timelineScrollSnapshot
+  if (!snapshot || getCurrentUrlKey() != snapshot.url) return
+
+  cancelTimelineScrollRestoration?.()
+
+  let cancelled = false
+  let startedAt = Date.now()
+  let stableSince = null
+  let timer
+  let userEvents = ['keydown', 'pointerdown', 'touchstart', 'wheel']
+
+  function cancel() {
+    if (cancelled) return
+    cancelled = true
+    clearTimeout(timer)
+    for (let eventName of userEvents) {
+      window.removeEventListener(eventName, cancel, true)
+    }
+    if (cancelTimelineScrollRestoration == cancel) {
+      cancelTimelineScrollRestoration = null
+    }
+  }
+
+  function apply() {
+    if (cancelled || getCurrentUrlKey() != snapshot.url) {
+      cancel()
+      return
+    }
+
+    let corrected = false
+    let anchorFound = false
+    if (snapshot.anchorPath != null && snapshot.anchorTop != null) {
+      let $anchor = findTimelineScrollAnchor(snapshot.anchorPath)
+      if ($anchor) {
+        anchorFound = true
+        let difference = $anchor.getBoundingClientRect().top - snapshot.anchorTop
+        if (Math.abs(difference) > 1) {
+          window.scrollBy(0, difference)
+          corrected = true
+        }
+      }
+    }
+
+    if (!anchorFound && Math.abs(window.scrollY - snapshot.scrollY) > 1) {
+      window.scrollTo(0, snapshot.scrollY)
+      corrected = true
+    }
+
+    let now = Date.now()
+    if (corrected) {
+      stableSince = null
+    } else if (stableSince == null) {
+      stableSince = now
+    }
+
+    // Wait long enough to outlast X's delayed scroll-to-top calls, while
+    // bounding work if the original virtualized timeline is no longer cached.
+    if (now - startedAt >= 8000 ||
+        (now - startedAt >= 3000 && stableSince != null && now - stableSince >= 1000)) {
+      log('finished restoring timeline scroll position', {anchorFound})
+      cancel()
+      return
+    }
+    timer = setTimeout(apply, 100)
+  }
+
+  for (let eventName of userEvents) {
+    window.addEventListener(eventName, cancel, {capture: true, passive: true})
+  }
+  cancelTimelineScrollRestoration = cancel
+  // Let X's popstate handler begin rendering the destination before the first
+  // restoration attempt.
+  timer = setTimeout(apply)
+}
+
 function patchHistory() {
   let props = getTopLevelProps()
   if (!props) return
@@ -4417,6 +4604,10 @@ function patchHistory() {
   History_replace = props.history.replace
   props.history.push = function (...args) {
     if (config.enabled && args[0] != null) {
+      let destinationPath = getNavigationPath(args[0])
+      if (destinationPath && URL_TWEET_BASE_RE.test(destinationPath)) {
+        captureTimelineScroll(destinationPath)
+      }
       if (config.hideVerifiedNotificationsTab && typeof args[0] == 'object' && typeof args[0].pathname == 'string') {
         if (args[0].pathname.endsWith('/verified_followers')) {
           log('Redirecting /verified_followers to /followers')
@@ -4427,6 +4618,11 @@ function patchHistory() {
     return History_push(...args)
   }
   props.history.push.patched = true
+  window.addEventListener('popstate', () => {
+    if (config.enabled && timelineScrollSnapshot?.url == getCurrentUrlKey()) {
+      restoreTimelineScroll()
+    }
+  })
   log('history patched')
 }
 
