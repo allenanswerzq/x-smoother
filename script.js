@@ -3944,6 +3944,16 @@ function observeAutomaticTimelineActions() {
     if (!$element.isConnected || $element.matches(':disabled, [aria-disabled="true"]')) return false
     if (timelineScrollRestorer?.isBusy()) return false
 
+    // X keeps virtual and floating controls in the DOM while they are hidden
+    // or outside the viewport. Activating those can scroll the feed or mutate
+    // a timeline item the user isn't looking at.
+    if ($element.closest('[aria-hidden="true"]')) return false
+    let rect = $element.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0 || rect.bottom <= 0 ||
+        rect.top >= window.innerHeight || rect.right <= 0 || rect.left >= window.innerWidth) return false
+    if (typeof $element.checkVisibility == 'function' &&
+        !$element.checkVisibility({checkOpacity: true, checkVisibilityCSS: true})) return false
+
     // X often renders "Show more" and "Show replies" as status links. A
     // programmatic click on one opens a seemingly random Tweet, so automatic
     // actions must be limited to controls which cannot navigate.
@@ -4018,6 +4028,7 @@ function observeAutomaticTimelineActions() {
     let activated = false
 
     if (config.autoLoadNewPosts && location.pathname == PagePaths.HOME &&
+        window.scrollY <= 80 &&
         $main instanceof HTMLElement) {
       let $scope = document.querySelector(Selectors.PRIMARY_COLUMN) ?? $main
       if ($scope instanceof HTMLElement) {
@@ -4557,8 +4568,10 @@ function configureTimelineScrollRestoration() {
     getAnchor: getTimelineScrollAnchor,
     findAnchorTop: findTimelineAnchorTop,
     isTimelineReady: isTimelineReadyForScrollRestoration,
-    scrollTo: top => window.scrollTo(0, top),
-    scrollBy: top => window.scrollBy(0, top),
+    // Explicitly bypass any CSS smooth-scrolling X has active. Repeated
+    // smooth corrections can queue and overshoot long after Back completes.
+    scrollTo: top => window.scrollTo({top, behavior: 'instant'}),
+    scrollBy: top => window.scrollBy({top, behavior: 'instant'}),
     addEventListener: (...args) => window.addEventListener(...args),
     removeEventListener: (...args) => window.removeEventListener(...args),
     log,
