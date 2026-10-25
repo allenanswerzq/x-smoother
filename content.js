@@ -57,12 +57,24 @@ chrome.storage.local.get((/** @type {Partial<import("./types").Config>} */ store
   document.documentElement.appendChild($settings)
   $settings.innerText = JSON.stringify(storedConfig)
 
-  let $main = document.createElement('script')
-  $main.src = chrome.runtime.getURL('script.js')
-  $main.onload = function() {
-    this.remove()
+  function injectMainScript() {
+    let $main = document.createElement('script')
+    $main.src = chrome.runtime.getURL('script.js')
+    $main.onload = function() {
+      this.remove()
+    }
+    document.documentElement.appendChild($main)
   }
-  document.documentElement.appendChild($main)
+
+  // Load the testable navigation state machine before the main-world script.
+  // If it fails to load, keep the rest of the extension functional.
+  let $scrollRestoration = document.createElement('script')
+  $scrollRestoration.src = chrome.runtime.getURL('scroll-restoration.js')
+  $scrollRestoration.onload = $scrollRestoration.onerror = function() {
+    this.remove()
+    injectMainScript()
+  }
+  document.documentElement.appendChild($scrollRestoration)
 
   chrome.storage.onChanged.addListener(onConfigChange)
 })

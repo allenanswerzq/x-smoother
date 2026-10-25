@@ -2400,6 +2400,12 @@ let currentPage = ''
 /** Current `location.pathname`. */
 let currentPath = ''
 
+/** Restores virtual timeline position after returning from an individual Tweet. */
+let timelineScrollRestorer = null
+
+/** `true` after the scroll restorer's global navigation listener is installed. */
+let timelineScrollRestorationListening = false
+
 /**
  * React Native stylesheet rule for the blur filter for sensitive content.
  * @type {CSSStyleRule}
@@ -3977,6 +3983,15 @@ function observeAutomaticTimelineActions() {
     scanTimer = null
     if (disconnected) return
 
+    // Loading or expanding timeline content while the old position is being
+    // restored can move its anchor or trigger another navigation. Resume these
+    // actions as soon as restoration finishes or the user takes over.
+    if (timelineScrollRestorer?.isBusy()) {
+      clearTimeout(retryTimer)
+      retryTimer = setTimeout(scheduleScan, 250)
+      return
+    }
+
     let $main = document.querySelector('main')
     let activated = false
 
@@ -4407,12 +4422,119 @@ function checkReactNativeStylesheet() {
 let History_push
 let History_replace
 
+function getCurrentUrlKey() {
+  return `${location.pathname}${location.search}${location.hash}`
+}
+
+/**
+ * @param {unknown} destination
+ */
+function getHistoryDestinationPath(destination) {
+  if (typeof destination == 'object' && destination != null &&
+      'pathname' in destination && typeof destination.pathname == 'string') {
+    return destination.pathname
+  }
+  if (typeof destination != 'string') return null
+  try {
+    return new URL(destination, location.href).pathname
+  } catch {
+    return null
+  }
+}
+
+/**
+ * @param {string} path
+ */
+function getTweetBasePath(path) {
+  return path?.match(URL_TWEET_BASE_RE)?.[0] ?? null
+}
+
+/**
+ * @param {HTMLElement} $article
+ */
+function getTimelineArticlePath($article) {
+  let $time = $article.querySelector('a[href*="/status/"] time')
+  let $link = $time?.closest('a[href]')
+  if (!($link instanceof HTMLAnchorElement)) return null
+  return getTweetBasePath($link.pathname)
+}
+
+/**
+ * @param {string} preferredPath
+ */
+function getTimelineScrollAnchor(preferredPath) {
+  let $scope = document.querySelector(Selectors.PRIMARY_COLUMN) ?? document.querySelector('main')
+  if (!($scope instanceof HTMLElement)) return null
+
+  let preferredId = getTweetBasePath(preferredPath)
+  let candidates = Array.from($scope.querySelectorAll('article')).flatMap($article => {
+    if (!($article instanceof HTMLElement)) return []
+    let id = getTimelineArticlePath($article)
+    if (!id) return []
+    return [{$article, id, rect: $article.getBoundingClientRect()}]
+  })
+  let preferred = candidates.find(candidate => candidate.id == preferredId)
+  let visible = candidates
+    .filter(candidate => candidate.rect.bottom > 0 && candidate.rect.top < innerHeight)
+    .sort((a, b) => Math.abs(a.rect.top - 120) - Math.abs(b.rect.top - 120))[0]
+  let selected = preferred ?? visible
+  return selected ? {id: selected.id, top: selected.rect.top} : null
+}
+
+/**
+ * @param {string} id
+ */
+function findTimelineAnchorTop(id) {
+  let $scope = document.querySelector(Selectors.PRIMARY_COLUMN) ?? document.querySelector('main')
+  if (!($scope instanceof HTMLElement)) return null
+  for (let $article of $scope.querySelectorAll('article')) {
+    if ($article instanceof HTMLElement && getTimelineArticlePath($article) == id) {
+      return $article.getBoundingClientRect().top
+    }
+  }
+  return null
+}
+
+function isTimelineReadyForScrollRestoration() {
+  let $primaryColumn = document.querySelector(Selectors.PRIMARY_COLUMN)
+  if (!($primaryColumn instanceof HTMLElement)) return false
+
+  // The URL and title can change before React replaces the individual-Tweet
+  // DOM. Its focused Tweet has tabindex=-1; scrolling while it is still here
+  // was the cause of the previous Back navigation loop.
+  return !$primaryColumn.querySelector(`${Selectors.TWEET}[tabindex="-1"]`)
+}
+
+function configureTimelineScrollRestoration() {
+  if (timelineScrollRestorer) return
+  if (typeof globalThis.createCpftTimelineScrollRestorer != 'function') {
+    warn('timeline scroll restoration helper not found')
+    return
+  }
+
+  timelineScrollRestorer = globalThis.createCpftTimelineScrollRestorer({
+    isTweetPath: path => URL_TWEET_RE.test(path),
+    getCurrentPath: () => currentPath,
+    getCurrentUrl: getCurrentUrlKey,
+    getScrollY: () => window.scrollY,
+    getAnchor: getTimelineScrollAnchor,
+    findAnchorTop: findTimelineAnchorTop,
+    isTimelineReady: isTimelineReadyForScrollRestoration,
+    scrollTo: top => window.scrollTo(0, top),
+    scrollBy: top => window.scrollBy(0, top),
+    addEventListener: (...args) => window.addEventListener(...args),
+    removeEventListener: (...args) => window.removeEventListener(...args),
+    log,
+  })
+}
+
 function patchHistory() {
   let props = getTopLevelProps()
   if (!props) return
   if (!props.history) return warn('history not found')
   if (!props.history.push) return warn('history.push not found')
   if (props.history.push.patched) return
+  configureTimelineScrollRestoration()
   History_push = props.history.push
   History_replace = props.history.replace
   props.history.push = function (...args) {
@@ -4424,9 +4546,23 @@ function patchHistory() {
         }
       }
     }
+    let destinationPath = getHistoryDestinationPath(args[0])
+    if (config.enabled && destinationPath) {
+      timelineScrollRestorer?.capture(destinationPath)
+    }
     return History_push(...args)
   }
   props.history.push.patched = true
+  if (!timelineScrollRestorationListening) {
+    timelineScrollRestorationListening = true
+    window.addEventListener('popstate', () => {
+      if (config.enabled) {
+        timelineScrollRestorer?.onPopState()
+      } else {
+        timelineScrollRestorer?.cancel('extension disabled')
+      }
+    })
+  }
   log('history patched')
 }
 
@@ -7047,6 +7183,9 @@ function processCurrentPage() {
     }
   }
 
+  // A popstate only marks restoration as pending. Starting it here guarantees
+  // X has processed the source route instead of scrolling the stale Tweet DOM.
+  timelineScrollRestorer?.onPageProcessed()
   observeAutomaticTimelineActions()
 }
 
@@ -8317,6 +8456,7 @@ function configChanged(changes) {
       // Process the current page if we've just been enabled on it
       main({processImmediately: true})
     } else {
+      timelineScrollRestorer?.cancel('extension disabled')
       // These functions have teardowns when disabled
       configureCss()
       configureFeatureFlags()
