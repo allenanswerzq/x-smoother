@@ -4035,7 +4035,7 @@ function observeAutomaticTimelineActions() {
         // Match the visible prompt before considering X's older floating
         // banner markup. The old structural selector can contain unrelated
         // controls, including the Tweet button.
-        let [$label] = getDeepestMatches(
+        let $labels = getDeepestMatches(
           $scope,
           'button, [role="button"], a[href], [tabindex="0"], span',
           $element => {
@@ -4044,14 +4044,17 @@ function observeAutomaticTimelineActions() {
               (/^Show\s+[\d.,]+\s+posts?$/i.test(text) || text == 'See new posts')
           }
         )
-        if ($label) {
+        for (let $label of $labels) {
           let $button = getClickTarget($label, $scope)
-          activated = activate(
+          if (activate(
             $button,
             'automatically loading new posts',
             getNormalizedText($label),
             {preserveTimeline: true}
-          ) || activated
+          )) {
+            activated = true
+            break
+          }
         }
       }
     }
