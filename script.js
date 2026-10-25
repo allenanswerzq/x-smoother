@@ -3910,6 +3910,7 @@ async function observeTimeline(page, options = {}) {
 
 let automaticActionAttempts = new WeakMap()
 let skippedUnsafeAutomaticActions = new WeakSet()
+let automaticTimelineActionsActive = false
 
 /**
  * @param {Element} $element
@@ -3923,10 +3924,11 @@ function getNormalizedText($element) {
  * the surrounding timeline item, or reuses an existing element with new text.
  */
 function observeAutomaticTimelineActions() {
-  if (!config.autoExpandPosts && !config.autoLoadNewPosts) return
+  if (automaticTimelineActionsActive) return
 
   let $observerTarget = $reactRoot ?? document.body
   if (!$observerTarget) return
+  automaticTimelineActionsActive = true
 
   let scanTimer
   let retryTimer
@@ -4139,9 +4141,10 @@ function observeAutomaticTimelineActions() {
   observeElement($observerTarget, scheduleScan, {
     leading: true,
     name: 'automatic timeline actions',
-    observers: pageObservers,
+    observers: globalObservers,
     onDisconnect() {
       disconnected = true
+      automaticTimelineActionsActive = false
       clearTimeout(scanTimer)
       clearTimeout(retryTimer)
       clearInterval(periodicTimer)
@@ -7282,7 +7285,6 @@ function processCurrentPage() {
   // A popstate only marks restoration as pending. Starting it here guarantees
   // X has processed the source route instead of scrolling the stale Tweet DOM.
   timelineScrollRestorer?.onPageProcessed()
-  observeAutomaticTimelineActions()
 }
 
 /**
@@ -8485,6 +8487,7 @@ async function main({processImmediately = false} = {}) {
       observeBodyBackgroundColor()
       observeReRenderBoundary()
       patchHistory()
+      observeAutomaticTimelineActions()
       interceptMediaButton()
       let initialThemeColor = getThemeColorFromState()
       if (initialThemeColor) {
