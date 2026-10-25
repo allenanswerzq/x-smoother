@@ -12,6 +12,7 @@ void function(root, factory) {
   const DEFAULTS = {
     startDelay: 120,
     retryDelay: 100,
+    fallbackDelay: 800,
     minimumDuration: 1500,
     stableDuration: 500,
     maximumDuration: 5000,
@@ -181,7 +182,8 @@ void function(root, factory) {
           scrollBy(delta)
           corrected = true
         }
-      } else if (!anchorSeen && !fallbackApplied) {
+      } else if (!anchorSeen && !fallbackApplied &&
+          (snapshot.anchorId == null || elapsed >= settings.fallbackDelay)) {
         fallbackApplied = true
         let delta = getScrollY() - snapshot.scrollY
         if (Math.abs(delta) > settings.tolerance) {

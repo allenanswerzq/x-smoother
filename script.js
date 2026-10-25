@@ -4059,6 +4059,15 @@ function observeAutomaticTimelineActions() {
       }
     }
 
+    // Never combine loading new posts with another automatic action in the
+    // same scan. This also serialises actions when the timeline is between
+    // renders and no stable Tweet anchor is available yet.
+    if (activated) {
+      clearTimeout(retryTimer)
+      retryTimer = setTimeout(scheduleScan, 500)
+      return
+    }
+
     if (config.autoExpandPosts) {
       let $scope = $reactRoot ?? document.body
       let $showMoreElements = new Set(
@@ -4080,12 +4089,15 @@ function observeAutomaticTimelineActions() {
         let $article = $label.closest('article')
         if (!($article instanceof HTMLElement)) continue
         let $button = getClickTarget($label, $article)
-        activated = activate(
+        if (activate(
           $button,
           'automatically expanding post',
           'Show more',
           {preserveTimeline: true}
-        ) || activated
+        )) {
+          activated = true
+          break
+        }
       }
 
       // Reply branches are separate timeline items rather than part of the
@@ -4097,7 +4109,8 @@ function observeAutomaticTimelineActions() {
       ])
       if (mobile) $replyScopes.add($main)
 
-      for (let $replyScope of $replyScopes) {
+      replyScopes: for (let $replyScope of $replyScopes) {
+        if (activated) break
         if (!($replyScope instanceof HTMLElement)) continue
         for (let $label of getDeepestMatches(
           $replyScope,
@@ -4106,12 +4119,15 @@ function observeAutomaticTimelineActions() {
         )) {
           let text = getNormalizedText($label)
           let $button = getClickTarget($label, $replyScope)
-          activated = activate(
+          if (activate(
             $button,
             'automatically expanding replies',
             text,
             {preserveTimeline: true}
-          ) || activated
+          )) {
+            activated = true
+            break replyScopes
+          }
         }
       }
     }

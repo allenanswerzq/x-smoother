@@ -107,6 +107,7 @@ function createHarness(overrides = {}) {
     maximumDuration: 1000,
     startDelay: 20,
     retryDelay: 20,
+    fallbackDelay: 100,
     preserveMinimumDuration: 100,
     preserveStableDuration: 40,
     preserveMaximumDuration: 400,
@@ -158,9 +159,27 @@ test('restores only after the source route has been processed', () => {
   harness.currentPath = '/home'
   harness.scrollY = 0
   assert.equal(harness.restorer.onPageProcessed(), true)
-  harness.advance(20)
+  harness.advance(100)
 
   assert.deepEqual(harness.scrollCalls, [['to', 1400]])
+})
+
+test('waits for the Tweet anchor before using the absolute fallback', () => {
+  let harness = createHarness()
+  leaveTimeline(harness)
+  popBackToTimeline(harness)
+  harness.currentPath = '/home'
+  harness.scrollY = 0
+
+  harness.restorer.onPageProcessed()
+  harness.advance(80)
+  assert.deepEqual(harness.scrollCalls, [])
+
+  // Browser/X restoration can mount the target Tweet shortly after the route
+  // becomes ready. Prefer one relative correction over an early absolute jump.
+  harness.anchorTop = 580
+  harness.advance(20)
+  assert.deepEqual(harness.scrollCalls, [['by', 340]])
 })
 
 test('restores the same tweet anchor to the same viewport offset', () => {
@@ -202,7 +221,7 @@ test('absolute fallback is never repeated while a virtual anchor is missing', ()
   harness.scrollY = 0
 
   harness.restorer.onPageProcessed()
-  harness.advance(20)
+  harness.advance(100)
   assert.deepEqual(harness.scrollCalls, [['to', 1400]])
 
   // X can reset scroll while it remounts the feed. Repeating the absolute
@@ -271,7 +290,7 @@ test('nested Tweet navigation keeps the original timeline snapshot', () => {
   harness.currentPath = '/home'
   harness.scrollY = 0
   harness.restorer.onPageProcessed()
-  harness.advance(20)
+  harness.advance(100)
 
   assert.deepEqual(harness.scrollCalls, [['to', 1400]])
 })
@@ -304,7 +323,7 @@ test('automatic actions can remain paused until restoration stabilises', () => {
   harness.advance(450)
 
   assert.equal(harness.restorer.isBusy(), false)
-  assert.deepEqual(harness.scrollCalls, [['to', 1400]])
+  assert.deepEqual(harness.scrollCalls, [])
 })
 
 test('loading new posts preserves the visible Tweet anchor', () => {
@@ -335,4 +354,35 @@ test('user input cancels automatic anchor preservation', () => {
 
   assert.equal(harness.restorer.isBusy(), false)
   assert.deepEqual(harness.scrollCalls, [])
+})
+
+test('route changes cancel automatic anchor preservation', () => {
+  let harness = createHarness()
+  harness.anchorTop = 240
+
+  harness.restorer.preserveAnchorDuring(() => {
+    harness.anchorTop = 740
+  })
+  harness.currentUrl = '/notifications'
+  harness.advance(20)
+
+  assert.equal(harness.restorer.isBusy(), false)
+  assert.deepEqual(harness.scrollCalls, [])
+})
+
+test('automatic anchor preservation serialises actions', () => {
+  let harness = createHarness()
+  harness.anchorTop = 240
+  let secondActionRan = false
+
+  assert.equal(harness.restorer.preserveAnchorDuring(() => {
+    harness.anchorTop = 740
+  }), true)
+  assert.equal(harness.restorer.preserveAnchorDuring(() => {
+    secondActionRan = true
+  }), false)
+
+  assert.equal(secondActionRan, false)
+  harness.advance(200)
+  assert.equal(harness.restorer.isBusy(), false)
 })
