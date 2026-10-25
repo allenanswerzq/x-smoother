@@ -1,7 +1,33 @@
 const assert = require('node:assert/strict')
 const test = require('node:test')
 
-const {createTimelineScrollRestorer} = require('../scroll-restoration.js')
+const {
+  createTimelineScrollRestorer,
+  isSafeAutomaticActionControl,
+} = require('../scroll-restoration.js')
+
+function fakeControl({button = false, roleButton = false, insideLink = false} = {}) {
+  return {
+    matches(selector) {
+      assert.equal(selector, 'button, [role="button"]')
+      return button || roleButton
+    },
+    closest(selector) {
+      assert.equal(selector, 'a[href]')
+      return insideLink ? {} : null
+    },
+  }
+}
+
+test('automatic actions accept non-navigating buttons only', () => {
+  assert.equal(isSafeAutomaticActionControl(fakeControl({button: true})), true)
+  assert.equal(isSafeAutomaticActionControl(fakeControl({roleButton: true})), true)
+  assert.equal(isSafeAutomaticActionControl(fakeControl()), false)
+  assert.equal(
+    isSafeAutomaticActionControl(fakeControl({roleButton: true, insideLink: true})),
+    false
+  )
+})
 
 function createHarness(overrides = {}) {
   let clock = 0
@@ -81,6 +107,9 @@ function createHarness(overrides = {}) {
     maximumDuration: 1000,
     startDelay: 20,
     retryDelay: 20,
+    preserveMinimumDuration: 100,
+    preserveStableDuration: 40,
+    preserveMaximumDuration: 400,
     ...overrides,
   })
 
@@ -165,6 +194,41 @@ test('waits for a delayed virtual timeline without touching stale DOM', () => {
   assert.deepEqual(harness.scrollCalls, [['to', 1400]])
 })
 
+test('absolute fallback is never repeated while a virtual anchor is missing', () => {
+  let harness = createHarness()
+  leaveTimeline(harness)
+  popBackToTimeline(harness)
+  harness.currentPath = '/home'
+  harness.scrollY = 0
+
+  harness.restorer.onPageProcessed()
+  harness.advance(20)
+  assert.deepEqual(harness.scrollCalls, [['to', 1400]])
+
+  // X can reset scroll while it remounts the feed. Repeating the absolute
+  // fallback caused the visible bouncing captured in the screen recording.
+  harness.scrollY = 0
+  harness.advance(200)
+  assert.deepEqual(harness.scrollCalls, [['to', 1400]])
+})
+
+test('never falls back to absolute scroll after the Tweet anchor was seen', () => {
+  let harness = createHarness()
+  leaveTimeline(harness)
+  popBackToTimeline(harness)
+  harness.currentPath = '/home'
+  harness.anchorTop = 580
+
+  harness.restorer.onPageProcessed()
+  harness.advance(20)
+  assert.deepEqual(harness.scrollCalls, [['by', 340]])
+
+  harness.anchorTop = null
+  harness.scrollY = 0
+  harness.advance(200)
+  assert.deepEqual(harness.scrollCalls, [['by', 340]])
+})
+
 test('user input cancels restoration immediately', () => {
   let harness = createHarness()
   leaveTimeline(harness)
@@ -235,8 +299,40 @@ test('automatic actions can remain paused until restoration stabilises', () => {
 
   assert.equal(harness.restorer.isBusy(), true)
   harness.restorer.onPageProcessed()
+  harness.advance(20)
+  harness.anchorTop = 240
   harness.advance(450)
 
   assert.equal(harness.restorer.isBusy(), false)
   assert.deepEqual(harness.scrollCalls, [['to', 1400]])
+})
+
+test('loading new posts preserves the visible Tweet anchor', () => {
+  let harness = createHarness()
+  harness.anchorTop = 240
+
+  assert.equal(harness.restorer.preserveAnchorDuring(() => {
+    // Simulate new posts being inserted above the visible Tweet.
+    harness.anchorTop = 740
+  }), true)
+  assert.equal(harness.restorer.isBusy(), true)
+
+  harness.advance(20)
+  assert.deepEqual(harness.scrollCalls, [['by', 500]])
+  harness.advance(200)
+  assert.equal(harness.restorer.isBusy(), false)
+})
+
+test('user input cancels automatic anchor preservation', () => {
+  let harness = createHarness()
+  harness.anchorTop = 240
+
+  harness.restorer.preserveAnchorDuring(() => {
+    harness.anchorTop = 740
+  })
+  harness.dispatch('pointerdown')
+  harness.advance(200)
+
+  assert.equal(harness.restorer.isBusy(), false)
+  assert.deepEqual(harness.scrollCalls, [])
 })

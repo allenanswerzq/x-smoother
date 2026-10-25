@@ -3909,6 +3909,7 @@ async function observeTimeline(page, options = {}) {
 }
 
 let automaticActionAttempts = new WeakMap()
+let skippedUnsafeAutomaticActions = new WeakSet()
 
 /**
  * @param {Element} $element
@@ -3932,12 +3933,26 @@ function observeAutomaticTimelineActions() {
   let disconnected = false
 
   /**
-   * @param {HTMLElement} $element
+   * @param {HTMLElement | null} $element
    * @param {string} action
    * @param {string} identity
+   * @param {{preserveTimeline?: boolean}} options
    */
-  function activate($element, action, identity) {
+  function activate($element, action, identity, {preserveTimeline = false} = {}) {
+    if (!($element instanceof HTMLElement)) return false
     if (!$element.isConnected || $element.matches(':disabled, [aria-disabled="true"]')) return false
+    if (timelineScrollRestorer?.isBusy()) return false
+
+    // X often renders "Show more" and "Show replies" as status links. A
+    // programmatic click on one opens a seemingly random Tweet, so automatic
+    // actions must be limited to controls which cannot navigate.
+    if (!globalThis.isCpftSafeAutomaticActionControl?.($element)) {
+      if (!skippedUnsafeAutomaticActions.has($element)) {
+        skippedUnsafeAutomaticActions.add($element)
+        log(`not ${action}: control can navigate`, $element)
+      }
+      return false
+    }
 
     let now = Date.now()
     let previous = automaticActionAttempts.get($element)
@@ -3948,7 +3963,11 @@ function observeAutomaticTimelineActions() {
 
     automaticActionAttempts.set($element, {count, identity, time: now})
     log(action)
-    $element.click()
+    if (preserveTimeline && timelineScrollRestorer) {
+      if (!timelineScrollRestorer.preserveAnchorDuring(() => $element.click())) return false
+    } else {
+      $element.click()
+    }
     return true
   }
 
@@ -3957,12 +3976,12 @@ function observeAutomaticTimelineActions() {
    * @param {HTMLElement} $scope
    */
   function getClickTarget($label, $scope) {
-    let $clickTarget = $label.closest('button, [role="button"], a[href], [tabindex="0"]')
+    let $clickTarget = $label.closest('button, [role="button"]')
     return $clickTarget instanceof HTMLElement &&
       $scope.contains($clickTarget) &&
       getNormalizedText($clickTarget) == getNormalizedText($label)
       ? $clickTarget
-      : $label
+      : null
   }
 
   /**
@@ -4008,7 +4027,12 @@ function observeAutomaticTimelineActions() {
         )
         if ($label) {
           let $button = getClickTarget($label, $scope)
-          activated = activate($button, 'automatically loading new posts', getNormalizedText($label)) || activated
+          activated = activate(
+            $button,
+            'automatically loading new posts',
+            getNormalizedText($label),
+            {preserveTimeline: true}
+          ) || activated
         } else {
           // Older versions of X use a floating, sometimes icon-only button.
           // Keep supporting it, but reject named controls so this structural
@@ -4023,7 +4047,12 @@ function observeAutomaticTimelineActions() {
           if ($button instanceof HTMLElement) {
             let text = getNormalizedText($button)
             if (text == '' || /new posts?/i.test(text)) {
-              activated = activate($button, 'automatically loading new posts', `native banner: ${text}`) || activated
+              activated = activate(
+                $button,
+                'automatically loading new posts',
+                `native banner: ${text}`,
+                {preserveTimeline: true}
+              ) || activated
             }
           }
         }
@@ -4051,7 +4080,12 @@ function observeAutomaticTimelineActions() {
         let $article = $label.closest('article')
         if (!($article instanceof HTMLElement)) continue
         let $button = getClickTarget($label, $article)
-        activated = activate($button, 'automatically expanding post', 'Show more') || activated
+        activated = activate(
+          $button,
+          'automatically expanding post',
+          'Show more',
+          {preserveTimeline: true}
+        ) || activated
       }
 
       // Reply branches are separate timeline items rather than part of the
@@ -4072,7 +4106,12 @@ function observeAutomaticTimelineActions() {
         )) {
           let text = getNormalizedText($label)
           let $button = getClickTarget($label, $replyScope)
-          activated = activate($button, 'automatically expanding replies', text) || activated
+          activated = activate(
+            $button,
+            'automatically expanding replies',
+            text,
+            {preserveTimeline: true}
+          ) || activated
         }
       }
     }
