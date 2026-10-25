@@ -3930,6 +3930,7 @@ function observeAutomaticTimelineActions() {
 
   let scanTimer
   let retryTimer
+  let periodicTimer
   let disconnected = false
 
   /**
@@ -3976,7 +3977,9 @@ function observeAutomaticTimelineActions() {
    * @param {HTMLElement} $scope
    */
   function getClickTarget($label, $scope) {
-    let $clickTarget = $label.closest('button, [role="button"]')
+    // Only native buttons are safe to activate automatically. X uses
+    // role=button for navigable Tweet surfaces as well as real controls.
+    let $clickTarget = $label.closest('button')
     return $clickTarget instanceof HTMLElement &&
       $scope.contains($clickTarget) &&
       getNormalizedText($clickTarget) == getNormalizedText($label)
@@ -4014,7 +4017,8 @@ function observeAutomaticTimelineActions() {
     let $main = document.querySelector('main')
     let activated = false
 
-    if (config.autoLoadNewPosts && location.pathname == PagePaths.HOME && $main instanceof HTMLElement) {
+    if (config.autoLoadNewPosts && location.pathname == PagePaths.HOME &&
+        $main instanceof HTMLElement) {
       let $scope = document.querySelector(Selectors.PRIMARY_COLUMN) ?? $main
       if ($scope instanceof HTMLElement) {
         // Match the visible prompt before considering X's older floating
@@ -4023,7 +4027,11 @@ function observeAutomaticTimelineActions() {
         let [$label] = getDeepestMatches(
           $scope,
           'button, [role="button"], a[href], [tabindex="0"], span',
-          $element => !$element.closest('article') && /^Show\s+[\d.,]+\s+posts?$/i.test(getNormalizedText($element))
+          $element => {
+            let text = getNormalizedText($element)
+            return !$element.closest('article') &&
+              (/^Show\s+[\d.,]+\s+posts?$/i.test(text) || text == 'See new posts')
+          }
         )
         if ($label) {
           let $button = getClickTarget($label, $scope)
@@ -4033,28 +4041,6 @@ function observeAutomaticTimelineActions() {
             getNormalizedText($label),
             {preserveTimeline: true}
           ) || activated
-        } else {
-          // Older versions of X use a floating, sometimes icon-only button.
-          // Keep supporting it, but reject named controls so this structural
-          // fallback can't mistake the composer Tweet button for the banner.
-          let bannerSelector = mobile
-            ? `${Selectors.MOBILE_TIMELINE_HEADER} ~ div[style^="transform"]:last-child`
-            : `${Selectors.PRIMARY_COLUMN} > div > div:first-child > div[style^="transform"]`
-          let $banner = document.querySelector(bannerSelector)
-          let $button = $banner?.matches('button, [role="button"]')
-            ? $banner
-            : $banner?.querySelector('button, [role="button"]')
-          if ($button instanceof HTMLElement) {
-            let text = getNormalizedText($button)
-            if (text == '' || /new posts?/i.test(text)) {
-              activated = activate(
-                $button,
-                'automatically loading new posts',
-                `native banner: ${text}`,
-                {preserveTimeline: true}
-              ) || activated
-            }
-          }
         }
       }
     }
@@ -4074,21 +4060,12 @@ function observeAutomaticTimelineActions() {
         $scope.querySelectorAll('[data-testid="tweet-text-show-more-link"]')
       )
 
-      // Newer layouts can omit the test id. Exact text and article scoping
-      // avoid activating "Show more replies" and unrelated sidebar links.
-      for (let $label of getDeepestMatches(
-        $scope,
-        'article button, article [role="button"], article a[href], article [tabindex="0"], article span',
-        $element => getNormalizedText($element) == 'Show more'
-      )) {
-        $showMoreElements.add($label)
-      }
-
       for (let $label of $showMoreElements) {
         if (!($label instanceof HTMLElement)) continue
         let $article = $label.closest('article')
         if (!($article instanceof HTMLElement)) continue
         let $button = getClickTarget($label, $article)
+        if (!$button?.matches('button[data-testid="tweet-text-show-more-link"]')) continue
         if (activate(
           $button,
           'automatically expanding post',
@@ -4143,6 +4120,8 @@ function observeAutomaticTimelineActions() {
     scanTimer = setTimeout(scan)
   }
 
+  periodicTimer = setInterval(scheduleScan, 2000)
+
   observeElement($observerTarget, scheduleScan, {
     leading: true,
     name: 'automatic timeline actions',
@@ -4151,6 +4130,7 @@ function observeAutomaticTimelineActions() {
       disconnected = true
       clearTimeout(scanTimer)
       clearTimeout(retryTimer)
+      clearInterval(periodicTimer)
     },
   }, {childList: true, subtree: true, characterData: true})
 }
@@ -4569,7 +4549,9 @@ function configureTimelineScrollRestoration() {
 
   timelineScrollRestorer = globalThis.createCpftTimelineScrollRestorer({
     isTweetPath: path => URL_TWEET_RE.test(path),
-    getCurrentPath: () => currentPath,
+    // X's title observer can lag behind History navigation or suppress a
+    // duplicate title, but location always reflects the active history entry.
+    getCurrentPath: () => location.pathname,
     getCurrentUrl: getCurrentUrlKey,
     getScrollY: () => window.scrollY,
     getAnchor: getTimelineScrollAnchor,
@@ -4583,14 +4565,62 @@ function configureTimelineScrollRestoration() {
   })
 }
 
+/**
+ * Captures normal user navigation before X replaces the virtual timeline.
+ * This is the reliable fallback when X's private React history object isn't
+ * available during extension startup.
+ *
+ * @param {MouseEvent} event
+ */
+function captureTimelineNavigationClick(event) {
+  if (!config.enabled || event.button != 0 || event.defaultPrevented ||
+      event.metaKey || event.ctrlKey || event.shiftKey || event.altKey ||
+      !(event.target instanceof Element)) return
+
+  let $interactive = event.target.closest(
+    'a[href], button, [role="button"], input, select, textarea, [contenteditable="true"]'
+  )
+  if ($interactive) {
+    // A Tweet's timestamp is a real link. Profile, media, action-bar and other
+    // interactive controls must not create a restoration snapshot.
+    if (!($interactive instanceof HTMLAnchorElement)) return
+    let destinationPath = getHistoryDestinationPath($interactive.href)
+    if (destinationPath) timelineScrollRestorer?.capture(destinationPath)
+    return
+  }
+
+  // Clicking non-interactive Tweet text/body uses X's internal navigation and
+  // may bypass the history.push object we patch below.
+  let $article = event.target.closest('article')
+  if (!($article instanceof HTMLElement)) return
+  let destinationPath = getTimelineArticlePath($article)
+  if (destinationPath) timelineScrollRestorer?.capture(destinationPath)
+}
+
 function patchHistory() {
+  configureTimelineScrollRestoration()
+
+  // These standard DOM/browser listeners do not depend on X's private React
+  // internals, so install them even when its history object isn't ready yet.
+  if (!timelineScrollRestorationListening) {
+    timelineScrollRestorationListening = true
+    document.addEventListener('click', captureTimelineNavigationClick, true)
+    window.addEventListener('popstate', () => {
+      if (config.enabled) {
+        timelineScrollRestorer?.onPopState()
+      } else {
+        timelineScrollRestorer?.cancel('extension disabled')
+      }
+    })
+  }
+
   let props = getTopLevelProps()
   if (!props) return
   if (!props.history) return warn('history not found')
   if (!props.history.push) return warn('history.push not found')
   if (props.history.push.patched) return
-  configureTimelineScrollRestoration()
-  History_push = props.history.push
+  let originalPush = props.history.push
+  History_push = originalPush
   History_replace = props.history.replace
   props.history.push = function (...args) {
     if (config.enabled && args[0] != null) {
@@ -4605,19 +4635,9 @@ function patchHistory() {
     if (config.enabled && destinationPath) {
       timelineScrollRestorer?.capture(destinationPath)
     }
-    return History_push(...args)
+    return originalPush(...args)
   }
   props.history.push.patched = true
-  if (!timelineScrollRestorationListening) {
-    timelineScrollRestorationListening = true
-    window.addEventListener('popstate', () => {
-      if (config.enabled) {
-        timelineScrollRestorer?.onPopState()
-      } else {
-        timelineScrollRestorer?.cancel('extension disabled')
-      }
-    })
-  }
   log('history patched')
 }
 
@@ -7118,6 +7138,11 @@ function processTwitterLogos($el) {
 
 function processCurrentPage() {
   disconnectObservers(pageObservers, 'page')
+
+  // X can expose or replace its private history object after initial startup.
+  // Keep the optional React integration patched; standard click/popstate
+  // capture installed by patchHistory() remains the primary safety net.
+  patchHistory()
 
   // Hooks for styling pages
   if (!$body) $body = document.body

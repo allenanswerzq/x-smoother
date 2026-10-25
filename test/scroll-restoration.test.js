@@ -9,8 +9,8 @@ const {
 function fakeControl({button = false, roleButton = false, insideLink = false} = {}) {
   return {
     matches(selector) {
-      assert.equal(selector, 'button, [role="button"]')
-      return button || roleButton
+      assert.equal(selector, 'button')
+      return button
     },
     closest(selector) {
       assert.equal(selector, 'a[href]')
@@ -21,10 +21,10 @@ function fakeControl({button = false, roleButton = false, insideLink = false} = 
 
 test('automatic actions accept non-navigating buttons only', () => {
   assert.equal(isSafeAutomaticActionControl(fakeControl({button: true})), true)
-  assert.equal(isSafeAutomaticActionControl(fakeControl({roleButton: true})), true)
+  assert.equal(isSafeAutomaticActionControl(fakeControl({roleButton: true})), false)
   assert.equal(isSafeAutomaticActionControl(fakeControl()), false)
   assert.equal(
-    isSafeAutomaticActionControl(fakeControl({roleButton: true, insideLink: true})),
+    isSafeAutomaticActionControl(fakeControl({button: true, insideLink: true})),
     false
   )
 })
@@ -135,6 +135,7 @@ function leaveTimeline(harness) {
 }
 
 function popBackToTimeline(harness) {
+  harness.currentPath = '/home'
   harness.currentUrl = '/home'
   assert.equal(harness.restorer.onPopState(), true)
 }
@@ -142,6 +143,7 @@ function popBackToTimeline(harness) {
 test('popstate never scrolls the stale tweet page', () => {
   let harness = createHarness()
   leaveTimeline(harness)
+  harness.timelineReady = false
   popBackToTimeline(harness)
 
   harness.advance(500)
@@ -150,15 +152,12 @@ test('popstate never scrolls the stale tweet page', () => {
   assert.deepEqual(harness.scrollCalls, [])
 })
 
-test('restores only after the source route has been processed', () => {
+test('restores even when X suppresses its duplicate title change', () => {
   let harness = createHarness()
   leaveTimeline(harness)
+  harness.scrollY = 0
   popBackToTimeline(harness)
 
-  assert.equal(harness.restorer.onPageProcessed(), false)
-  harness.currentPath = '/home'
-  harness.scrollY = 0
-  assert.equal(harness.restorer.onPageProcessed(), true)
   harness.advance(100)
 
   assert.deepEqual(harness.scrollCalls, [['to', 1400]])

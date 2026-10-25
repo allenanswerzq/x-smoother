@@ -18,7 +18,7 @@ void function(root, factory) {
     maximumDuration: 5000,
     preserveMinimumDuration: 1500,
     preserveStableDuration: 500,
-    preserveMaximumDuration: 3000,
+    preserveMaximumDuration: 8000,
     snapshotLifetime: 30 * 60 * 1000,
     tolerance: 2,
   }
@@ -36,13 +36,13 @@ void function(root, factory) {
   ])
 
   /**
-   * Automatic actions may click buttons, but never links or arbitrary labels.
-   * Some X controls combine role=button with an enclosing status link, so both
-   * checks are required.
+   * Automatic actions may click actual buttons, but never links or arbitrary
+   * role=button containers. X uses role=button on whole Tweet surfaces, and
+   * clicking one of those can open an unrelated-looking Tweet.
    */
   function isSafeAutomaticActionControl(element) {
     return Boolean(
-      element?.matches?.('button, [role="button"]') &&
+      element?.matches?.('button') &&
       !element.closest('a[href]')
     )
   }
@@ -284,9 +284,18 @@ void function(root, factory) {
       }
 
       clearScheduledStep()
-      phase = 'pending'
+      // The browser updates location before dispatching popstate. Start
+      // watching the destination immediately instead of waiting for X's title
+      // observer, which can legitimately suppress a duplicate title change.
+      // isTimelineReady() still prevents us from touching the stale Tweet DOM.
+      phase = 'active'
+      startedAt = now()
+      stableSince = null
+      anchorSeen = false
+      fallbackApplied = false
       addUserInputListeners()
-      log('waiting for the source timeline route to be processed')
+      log('restoring timeline scroll position after browser navigation')
+      scheduleStep(settings.startDelay)
       return true
     }
 
