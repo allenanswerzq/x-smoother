@@ -14,12 +14,6 @@
   "alwaysUseLatestTweetsLabel": {
     "message": "Utiliser le fil Abonnements (chronologique) par défaut"
   },
-  "autoExpandPostsLabel": {
-    "message": "Développer automatiquement les posts"
-  },
-  "autoLoadNewPostsLabel": {
-    "message": "Charger automatiquement les nouvelles publications"
-  },
   "appStoreSubtitle": {
     "message": "Contrôlez votre fil"
   },

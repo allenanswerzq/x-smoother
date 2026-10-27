@@ -11,7 +11,6 @@
     "lint-mv3": "npm run copy-mv3 && web-ext lint",
     "copy-mv2": "node ./scripts/copy.js manifest.mv2.json manifest.json",
     "copy-mv3": "node ./scripts/copy.js manifest.mv3.json manifest.json",
-    "test": "node --test test/*.test.js",
     "start": "npm run firefox",
     "prefirefox": "npm run create-browser-action && npm run copy-mv2",
     "firefox": "web-ext run --start-url https://twitter.com",
@@ -44,7 +43,6 @@
       "safari/",
       "screenshots/",
       "scripts/",
-      "test/",
       "types.d.ts"
     ]
   },

@@ -8,8 +8,6 @@ export type Config = {
   addFocusedTweetAccountLocation: boolean
   // XXX This is now more like "use the Following tab by default"
   alwaysUseLatestTweets: boolean
-  autoExpandPosts: boolean
-  autoLoadNewPosts: boolean
   bypassAgeVerification: boolean
   darkModeTheme: 'lightsOut' | 'dim'
   defaultToLatestSearch: boolean

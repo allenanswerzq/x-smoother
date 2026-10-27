@@ -14,12 +14,6 @@
   "alwaysUseLatestTweetsLabel": {
     "message": "Use the Following (chronological) timeline by default"
   },
-  "autoExpandPostsLabel": {
-    "message": "Automatically expand posts"
-  },
-  "autoLoadNewPostsLabel": {
-    "message": "Automatically load new posts"
-  },
   "appStoreSubtitle": {
     "message": "Take control of your timeline",
     "description": "<= 30 characters"

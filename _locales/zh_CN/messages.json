@@ -14,12 +14,6 @@
   "alwaysUseLatestTweetsLabel": {
     "message": "默认使用 关注（按时间顺序）的时间线"
   },
-  "autoExpandPostsLabel": {
-    "message": "自动展开帖子"
-  },
-  "autoLoadNewPostsLabel": {
-    "message": "自动加载新帖子"
-  },
   "appStoreSubtitle": {
     "message": "掌控你的时间线"
   },
