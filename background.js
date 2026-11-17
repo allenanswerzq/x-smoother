@@ -1,3 +1,5 @@
+import "./managed-settings.js"
+
 const isSafari = location.protocol.startsWith('safari-web-extension:')
 
 const feedDefaultsMigration = 'xSmootherFeedDefaultsV1'

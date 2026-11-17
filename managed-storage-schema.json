@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-03/schema#",
+  "type": "object",
+  "properties": {
+    "settingsJson": {
+      "type": "string",
+      "description": "JSON object of chrome.storage.local items, set once per settingsSha256."
+    },
+    "settingsSha256": {
+      "type": "string",
+      "description": "SHA-256 digest identifying the managed settings revision."
+    }
+  }
+}
