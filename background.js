@@ -1,33 +1,8 @@
-import "./managed-settings.js"
+import {watchManagedSettings} from "./managed-settings.js"
+
+watchManagedSettings()
 
 const isSafari = location.protocol.startsWith('safari-web-extension:')
-
-const feedDefaultsMigration = 'xSmootherFeedDefaultsV1'
-const forYouRecencyMigration = 'xSmootherForYouRecencyV1'
-
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.get({[feedDefaultsMigration]: false}, (stored) => {
-    if (stored[feedDefaultsMigration]) return
-
-    chrome.storage.local.set({
-      alwaysUseLatestTweets: true,
-      hideForYouTimeline: false,
-      sortFollowing: 'mostRecent',
-      [feedDefaultsMigration]: true,
-    })
-  })
-})
-
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.get({[forYouRecencyMigration]: false}, (stored) => {
-    if (stored[forYouRecencyMigration]) return
-
-    chrome.storage.local.set({
-      sortForYouByRecency: true,
-      [forYouRecencyMigration]: true,
-    })
-  })
-})
 
 const enabledIcons = {
   16: 'icons/icon16.png',

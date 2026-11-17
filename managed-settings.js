@@ -18,13 +18,16 @@ async function importManagedSettings() {
   });
 }
 
-function importLogged() {
-  importManagedSettings().catch((error) => {
-    console.error("Could not import the managed settings:", error);
+// Call once, synchronously at startup, so a policy change wakes the worker.
+// `ready` is the extension's own startup, which may write storage: the import
+// waits for it, so that startup cannot overwrite the imported settings.
+export function watchManagedSettings(ready = Promise.resolve()) {
+  const run = () =>
+    Promise.allSettled([ready])
+      .then(importManagedSettings)
+      .catch((error) => console.error("Could not import the managed settings:", error));
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "managed") run();
   });
+  run();
 }
-
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "managed") importLogged();
-});
-importLogged();
